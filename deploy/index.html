@@ -542,11 +542,10 @@
       conversionView: DATA.metadata.default_conversion_view || 'db',
     };
 
-    const metricCols = ['spend','impressions','clicks','cpm','ctr','cpc','members','member_cac','lookups','lookup_rate','lookup_cac','applications','application_rate','application_cac','application_amount','refund_per_application','expected_payment','roas'];
+    const metricCols = ['spend','impressions','clicks','cpm','ctr','cpc','lookups','lookup_rate','lookup_cac','applications','application_rate','application_cac','application_amount','refund_per_application','expected_payment','roas'];
     const labels = {
       source:'source', campaign:'campaign', content:'content', term:'term', date:'date',
       spend:'광고비', impressions:'노출', clicks:'클릭', cpm:'CPM', ctr:'CTR', cpc:'CPC',
-      members:'회원', member_cac:'회원CAC',
       lookups:'조회', lookup_rate:'조회율', lookup_cac:'조회CAC',
       applications:'신청', application_rate:'신청율', application_cac:'신청CAC',
       application_amount:'신청금액', refund_per_application:'인당환급액', expected_payment:'예상결제액', roas:'ROAS',
@@ -555,9 +554,9 @@
       google_segment:'Google Segment', row_type:'Level',
       severity:'심각도', risk_type:'위험 구분', note:'판단 메모'
     };
-    const money = new Set(['spend','cpm','cpc','member_cac','lookup_cac','application_cac','application_amount','refund_per_application','expected_payment','avg_lookup_cac_7d','campaign_lookup_cac']);
+    const money = new Set(['spend','cpm','cpc','lookup_cac','application_cac','application_amount','refund_per_application','expected_payment','avg_lookup_cac_7d','campaign_lookup_cac']);
     const pct = new Set(['ctr','lookup_rate','application_rate','roas','lookup_cac_vs_avg_7d','lookup_share']);
-    const numeric = new Set(['impressions','clicks','members','lookups','applications']);
+    const numeric = new Set(['impressions','clicks','lookups','applications']);
     const colors = { '합계':'#17324d', 'facebook.business':'#3366FF', 'google_demandgen':'#CC0000', 'google_pmax':'#CC0000', 'kakao':'#FFC000', 'tiktok':'#9900CC' };
 
     function activeData() {
