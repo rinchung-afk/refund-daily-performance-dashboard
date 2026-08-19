@@ -1760,6 +1760,43 @@
         ${contentTrendSvg(rows)}`;
     }
 
+    function contentTotalComment(config, rows) {
+      if (!rows.length) return '';
+      const total = derive(sumRows(rows));
+      const totalLookups = rows.reduce((sum, row) => sum + n(row.lookups), 0);
+      const bestContent = rows.reduce((best, row) => n(row.lookups) > n(best.lookups) ? row : best, rows[0]);
+      const bestLookupShare = totalLookups ? n(bestContent.lookups) / totalLookups : 0;
+      const highCacRows = rows
+        .filter(row => n(row.lookup_cac) > 0 && n(row.campaign_lookup_cac) > 0 && n(row.lookup_cac) >= n(row.campaign_lookup_cac) * 1.5)
+        .sort((a, b) => (n(b.lookup_cac) / n(b.campaign_lookup_cac)) - (n(a.lookup_cac) / n(a.campaign_lookup_cac)));
+      const zeroLookupRows = rows.filter(row => n(row.spend) > 0 && n(row.lookups) === 0);
+      const actionCounts = rows.reduce((acc, row) => {
+        acc[row.action] = (acc[row.action] || 0) + 1;
+        return acc;
+      }, {});
+      const actionLine = ['중단 검토','교체 검토','신청 전환 점검','확대 후보','관찰']
+        .filter(action => actionCounts[action])
+        .map(action => `${action} ${actionCounts[action]}개`)
+        .join(', ') || '표시 대상 없음';
+      const periodLabel = config.periodMode === 'period'
+        ? `${config.periodRange.start}~${config.periodRange.end}`
+        : '당일';
+      const scopeLabel = config.scopeLabel || config.source || '전체';
+      const detailLabel = config.isGoogle ? 'content/term' : 'content';
+      const bestName = bestContent.content || bestContent.term || '-';
+      const topHighCac = highCacRows[0];
+      const topHighCacName = topHighCac ? (topHighCac.content || topHighCac.term || '-') : '';
+      return `
+        <strong>${scopeLabel} Content Total ${periodLabel} 성과 요약</strong>
+        <ul style="margin:8px 0 0 18px; padding:0;">
+          <li>전체 ${detailLabel}: ${rows.length.toLocaleString('ko-KR')}개, 합계 조회: ${fmt(total.lookups, 'lookups')}, 전체 조회CAC: ${fmt(total.lookup_cac, 'lookup_cac')}</li>
+          <li>조회수 최상위 ${detailLabel}: "${bestName}" / ${bestContent.campaign} (${fmt(bestContent.lookups, 'lookups')}, 선택 기간 총 조회 대비 ${fmt(bestLookupShare, 'lookup_rate')})</li>
+          <li>campaign 평균 조회CAC 대비 1.5배 이상 높은 ${detailLabel}: ${highCacRows.length}개${topHighCac ? ` (최고: "${topHighCacName}" / ${fmt(topHighCac.lookup_cac, 'lookup_cac')})` : ''}</li>
+          <li>광고비가 발생했지만 조회가 없는 ${detailLabel}: ${zeroLookupRows.length}개</li>
+          <li>액션 라벨 분포: ${actionLine}</li>
+        </ul>`;
+    }
+
     function renderContentAnalysisControls(key, sources) {
       const selected = ensureContentSelection(key, sources);
       const campaigns = historicalCampaignRowsForSources(sources);
@@ -1935,6 +1972,74 @@
         .sort((a, b) => n(b.lookups) - n(a.lookups));
     }
 
+    function aggregateContentRows(rows) {
+      const byContent = new Map();
+      const metricKeys = ['spend','impressions','clicks','members','lookups','applications','application_amount','expected_payment'];
+      rows.forEach(row => {
+        const source = row.source || '';
+        const campaign = row.campaign || '';
+        const content = row.content || row.term || '-';
+        if (!source || !campaign || campaign === '-' || !content || content === '-') return;
+        const key = `${source}||${campaign}||${content}`;
+        if (!byContent.has(key)) {
+          byContent.set(key, { source, campaign, content, spend:0, impressions:0, clicks:0, members:0, lookups:0, applications:0, application_amount:0, expected_payment:0 });
+        }
+        const item = byContent.get(key);
+        for (const metric of metricKeys) item[metric] += n(row[metric]);
+      });
+      return Array.from(byContent.values()).map(derive).filter(row => n(row.impressions) > 0);
+    }
+
+    function campaignStatsFromContentRows(rows) {
+      const stats = new Map();
+      rows.forEach(row => {
+        const key = `${row.source}||${row.campaign}`;
+        if (!stats.has(key)) stats.set(key, { spend: 0, lookups: 0 });
+        const item = stats.get(key);
+        item.spend += n(row.spend);
+        item.lookups += n(row.lookups);
+      });
+      return stats;
+    }
+
+    function contentTotalRowsForSources(sources, options = {}) {
+      const wanted = new Set(sources);
+      const mode = options.mode || 'today';
+      const range = options.range || { start: DATA.metadata.basis_date, end: DATA.metadata.basis_date };
+      const basisDate = String(DATA.metadata.basis_date || '').slice(0, 10);
+      let sourceRows = [];
+      if (mode === 'period') {
+        sourceRows = historicalDailyRowsAll().filter(row => {
+          const date = String(row.date || '').slice(0, 10);
+          return wanted.has(row.source) && date >= range.start && date <= range.end;
+        });
+        const hasBasisHistory = basisDate && sourceRows.some(row => String(row.date || '').slice(0, 10) === basisDate);
+        if (!hasBasisHistory && range.start <= basisDate && range.end >= basisDate) {
+          sourceRows = sourceRows.concat(activeData().content_breakdown_today.filter(row => wanted.has(row.source)));
+        }
+      } else {
+        sourceRows = activeData().content_breakdown_today.filter(row => wanted.has(row.source));
+      }
+      const contentRows = aggregateContentRows(sourceRows);
+      const campaignStats = campaignStatsFromContentRows(contentRows);
+      return contentRows
+        .map(row => {
+          const actionRow = classifyContentAction(row, campaignStats);
+          return {
+            ...actionRow,
+            term: actionRow.content,
+            google_segment: googleSegment(actionRow.source)
+          };
+        })
+        .sort((a, b) =>
+          n(b.lookups) - n(a.lookups)
+          || n(b.spend) - n(a.spend)
+          || n(b.impressions) - n(a.impressions)
+          || String(a.campaign).localeCompare(String(b.campaign))
+          || String(a.content).localeCompare(String(b.content))
+        );
+    }
+
     function googleActionRows() {
       return ['google_pmax', 'google_demandgen']
         .flatMap(source => googleContentRows(source))
@@ -1966,6 +2071,27 @@
         };
       }
       if (state.tab === 'google') {
+        if (state.googleView === 'content_total') {
+          const key = ensureCampaignRange('google', '__content_total');
+          const mode = state.campaignMode[key];
+          return {
+            rows: contentTotalRowsForSources(['google_pmax', 'google_demandgen'], {
+              mode,
+              range: state.campaignRange[key]
+            }),
+            cols: ['action','source','campaign','content', ...metricCols],
+            defaultSort: 'lookups',
+            actionList: true,
+            contentTotal: true,
+            hideRealtimeMembers: true,
+            headerLabels: { content: 'content / term' },
+            periodMode: mode,
+            periodRange: state.campaignRange[key],
+            scopeLabel: 'Google',
+            isGoogle: true,
+            emptyMessage: '표시할 Content Total 데이터가 없습니다.'
+          };
+        }
         if (state.googleView === 'content_analysis') {
           const rows = contentAnalysisRows('google').map(row => ({ ...row, google_segment: googleSegment(row.source) }));
           return {
@@ -2021,6 +2147,26 @@
         const rows = activeData().campaign_breakdown_today.filter(row => row.source === source && n(row.spend) > 0);
         return { rows, cols: ['campaign', ...metricCols], expandableCampaign: true, source, hideRealtimeMembers: true };
       }
+      if (campaign === '__content_total') {
+        const key = ensureCampaignRange(source, '__content_total');
+        const mode = state.campaignMode[key];
+        return {
+          rows: contentTotalRowsForSources([source], {
+            mode,
+            range: state.campaignRange[key]
+          }),
+          cols: ['action','campaign','content', ...metricCols],
+          defaultSort: 'lookups',
+          actionList: true,
+          contentTotal: true,
+          source,
+          hideRealtimeMembers: true,
+          periodMode: mode,
+          periodRange: state.campaignRange[key],
+          scopeLabel: source,
+          emptyMessage: '표시할 Content Total 데이터가 없습니다.'
+        };
+      }
       if (campaign === '__content_analysis') {
         const detailCol = source === 'google_pmax' ? 'term' : 'content';
         return {
@@ -2049,7 +2195,7 @@
         return;
       }
       if (state.tab === 'google') {
-        if (!state.googleView || (state.googleView !== 'summary' && state.googleView !== 'content_analysis' && !state.googleView.startsWith('campaign:'))) state.googleView = 'summary';
+        if (!state.googleView || (state.googleView !== 'summary' && state.googleView !== 'content_total' && state.googleView !== 'content_analysis' && !state.googleView.startsWith('campaign:'))) state.googleView = 'summary';
         const pmaxCampaigns = campaignsForSource('google_pmax');
         const demandgenCampaigns = campaignsForSource('google_demandgen');
         const pmaxButtons = pmaxCampaigns.map(row => {
@@ -2061,12 +2207,15 @@
           return '<button class="' + (state.googleView === view ? 'active' : '') + '" data-google-view="' + view + '">' + row.campaign + ' / ' + fmt(row.lookups, 'lookups') + '</button>';
         }).join('');
         let googlePeriodControls = '';
-        if (state.googleView.startsWith('campaign:')) {
+        if (state.googleView === 'content_total') {
+          googlePeriodControls = campaignPeriodControls('google', '__content_total');
+        } else if (state.googleView.startsWith('campaign:')) {
           const [, source, campaign] = state.googleView.split(':');
           googlePeriodControls = campaignPeriodControls(source, campaign);
         }
         box.innerHTML = `
           <button class="${state.googleView === 'summary' ? 'active' : ''}" data-google-view="summary">Google Total</button>
+          <button class="${state.googleView === 'content_total' ? 'active' : ''}" data-google-view="content_total">Content Total</button>
           <button class="${state.googleView === 'content_analysis' ? 'active' : ''}" data-google-view="content_analysis">Content 분석</button>
           ${pmaxButtons}
           ${demandgenButtons}
@@ -2083,12 +2232,16 @@
       const campaigns = campaignsForSource(source);
       if (!state.activeCampaign[source]) state.activeCampaign[source] = '__total';
       const totalButton = `<button class="${state.activeCampaign[source] === '__total' ? 'active' : ''}" data-campaign="__total">Campaign Total</button>`;
+      const contentTotalButton = `<button class="${state.activeCampaign[source] === '__content_total' ? 'active' : ''}" data-campaign="__content_total">Content Total</button>`;
       const contentButton = `<button class="${state.activeCampaign[source] === '__content_analysis' ? 'active' : ''}" data-campaign="__content_analysis">Content 분석</button>`;
       const contentControls = state.activeCampaign[source] === '__content_analysis' ? renderContentAnalysisControls(source, [source]) : '';
-      const periodControls = !['__total','__content_analysis'].includes(state.activeCampaign[source])
-        ? campaignPeriodControls(source, state.activeCampaign[source])
-        : '';
-      box.innerHTML = totalButton + contentButton + campaigns.map(row => `
+      let periodControls = '';
+      if (state.activeCampaign[source] === '__content_total') {
+        periodControls = campaignPeriodControls(source, '__content_total');
+      } else if (!['__total','__content_analysis'].includes(state.activeCampaign[source])) {
+        periodControls = campaignPeriodControls(source, state.activeCampaign[source]);
+      }
+      box.innerHTML = totalButton + contentTotalButton + contentButton + campaigns.map(row => `
         <button class="${state.activeCampaign[source] === row.campaign ? 'active' : ''}" data-campaign="${row.campaign}">
           ${row.campaign} · ${fmt(row.lookups, 'lookups')}
         </button>
@@ -2163,6 +2316,9 @@
       } else if (config.googleSummary) {
         comment.style.display = 'block';
         comment.innerHTML = sourceSummaryComment(state.expandedGoogleSummary || 'Google');
+      } else if (config.contentTotal && rows.length) {
+        comment.style.display = 'block';
+        comment.innerHTML = contentTotalComment(config, rows);
       } else if (config.highlightContent && rows.length) {
         bestContent = rows.reduce((best, row) => n(row.lookups) > n(best.lookups) ? row : best, rows[0]);
         const totalLookups = rows.reduce((sum, row) => sum + n(row.lookups), 0);
@@ -2280,7 +2436,7 @@
           }
           return `<tr class="${rowClass}">${config.cols.map(col => renderCell(row, col, config)).join('')}</tr>`;
         }).join('');
-        if (!body) body = `<tr><td colspan="${config.cols.length}" style="text-align:left;">자동 탐지된 위험 항목이 없습니다.</td></tr>`;
+        if (!body) body = `<tr><td colspan="${config.cols.length}" style="text-align:left;">${config.emptyMessage || '자동 탐지된 위험 항목이 없습니다.'}</td></tr>`;
       }
       document.getElementById('dataTable').innerHTML = `
         <thead><tr>${config.cols.map(col => `<th class="${colClass(col)}" data-col="${col}">${headerTextForConfig(col, config)}</th>`).join('')}</tr></thead>
