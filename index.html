@@ -1898,6 +1898,17 @@
 
     function campaignPeriodKey(source, campaign) { return `${source}||${campaign}`; }
 
+    function contentAnalysisPeriodKey(key) { return campaignPeriodKey(key, '__content_analysis'); }
+
+    function ensureContentAnalysisRange(key) {
+      const rangeKey = contentAnalysisPeriodKey(key);
+      if (!state.campaignMode[rangeKey]) state.campaignMode[rangeKey] = 'period';
+      if (!state.campaignRange[rangeKey]) {
+        state.campaignRange[rangeKey] = { start: DATA.metadata.recent_7_start, end: DATA.metadata.basis_date };
+      }
+      return rangeKey;
+    }
+
     function ensureCampaignRange(source, campaign) {
       const key = campaignPeriodKey(source, campaign);
       if (!state.campaignMode[key]) state.campaignMode[key] = 'today';
@@ -1956,6 +1967,10 @@
       return state.tab === 'google' ? 'google' : state.tab.replace('source:', '');
     }
 
+    function contentAnalysisSourcesForKey(key) {
+      return key === 'google' ? ['google_pmax', 'google_demandgen'] : [key];
+    }
+
     function isRecent7(row) {
       const date = String(row.date || '').slice(0, 10);
       return date >= DATA.metadata.recent_7_start && date <= DATA.metadata.recent_7_end;
@@ -1991,8 +2006,28 @@
       return Array.from(byDate.values()).map(derive).sort((a, b) => String(b.date).localeCompare(String(a.date)));
     }
 
-    function contentOptionsForCampaign(source, campaign) {
-      const recentRows = historicalDailyRows().filter(row => row.source === source && row.campaign === campaign && isRecent7(row));
+    function contentRowsForAnalysisOption(source, campaign, rangeKey = null) {
+      if (rangeKey && state.campaignMode[rangeKey] === 'period') {
+        const range = state.campaignRange[rangeKey];
+        const basisDate = String(DATA.metadata.basis_date || '').slice(0, 10);
+        const rows = historicalDailyRowsAll().filter(row => {
+          const date = String(row.date || '').slice(0, 10);
+          return row.source === source && row.campaign === campaign && date >= range.start && date <= range.end;
+        });
+        const hasBasisHistory = basisDate && rows.some(row => String(row.date || '').slice(0, 10) === basisDate);
+        if (!hasBasisHistory && range.start <= basisDate && range.end >= basisDate) {
+          rows.push(...(activeData().content_breakdown_today || []).filter(row => row.source === source && row.campaign === campaign));
+        }
+        return rows;
+      }
+      if (rangeKey && state.campaignMode[rangeKey] === 'today') {
+        return (activeData().content_breakdown_today || []).filter(row => row.source === source && row.campaign === campaign);
+      }
+      return historicalDailyRows().filter(row => row.source === source && row.campaign === campaign && isRecent7(row));
+    }
+
+    function contentOptionsForCampaign(source, campaign, rangeKey = null) {
+      const recentRows = contentRowsForAnalysisOption(source, campaign, rangeKey);
       const campaignSpend = recentRows.reduce((sum, row) => sum + n(row.spend), 0);
       const byContent = new Map();
       recentRows.forEach(row => {
@@ -2010,6 +2045,7 @@
     }
 
     function ensureContentSelection(key, sources) {
+      const rangeKey = ensureContentAnalysisRange(key);
       const campaigns = historicalCampaignRowsForSources(sources);
       if (!campaigns.length) {
         state.contentDraft[key] = { source: sources[0] || '', campaign: '', content: '' };
@@ -2018,7 +2054,7 @@
       const current = state.contentDraft[key] || state.contentAnalysis[key] || {};
       const campaignExists = campaigns.some(row => row.source === current.source && row.campaign === current.campaign);
       const selectedCampaign = campaignExists ? current : campaigns[0];
-      const contents = contentOptionsForCampaign(selectedCampaign.source, selectedCampaign.campaign);
+      const contents = contentOptionsForCampaign(selectedCampaign.source, selectedCampaign.campaign, rangeKey);
       const contentExists = contents.some(row => row.content === current.content);
       const selectedContent = contentExists ? current.content : (contents[0] ? contents[0].content : '');
       state.contentDraft[key] = { source: selectedCampaign.source, campaign: selectedCampaign.campaign, content: selectedContent };
@@ -2026,19 +2062,31 @@
     }
 
     function contentAnalysisRows(key) {
+      const rangeKey = ensureContentAnalysisRange(key);
       const selected = state.contentAnalysis[key];
       if (!selected || !selected.source || !selected.campaign || !selected.content) return [];
+      const mode = state.campaignMode[rangeKey];
+      const range = state.campaignRange[rangeKey];
       const campaignDailySpend = new Map();
       const basisDate = String(DATA.metadata.basis_date || '').slice(0, 10);
       const metricKeys = ['spend','impressions','clicks','members','lookups','applications','application_amount','expected_payment'];
-      historicalDailyRows()
-        .filter(row => row.source === selected.source && row.campaign === selected.campaign && String(row.date || '').slice(0, 10) !== basisDate)
+      const sourceRows = mode === 'period'
+        ? historicalDailyRowsAll().filter(row => {
+            const date = String(row.date || '').slice(0, 10);
+            return row.source === selected.source && row.campaign === selected.campaign && date >= range.start && date <= range.end;
+          })
+        : [];
+      sourceRows
         .forEach(row => {
           const date = String(row.date || '').slice(0, 10);
           campaignDailySpend.set(date, (campaignDailySpend.get(date) || 0) + n(row.spend));
         });
-      (activeData().content_breakdown_today || [])
-        .filter(row => row.source === selected.source && row.campaign === selected.campaign)
+      const hasBasisHistory = basisDate && sourceRows.some(row => String(row.date || '').slice(0, 10) === basisDate);
+      const shouldUseToday = mode === 'today' || (!hasBasisHistory && range.start <= basisDate && range.end >= basisDate);
+      const todayRows = shouldUseToday
+        ? (activeData().content_breakdown_today || []).filter(row => row.source === selected.source && row.campaign === selected.campaign)
+        : [];
+      todayRows
         .forEach(row => {
           campaignDailySpend.set(basisDate, (campaignDailySpend.get(basisDate) || 0) + n(row.spend));
         });
@@ -2050,11 +2098,11 @@
         const item = byDate.get(date);
         for (const metric of metricKeys) item[metric] += n(row[metric]);
       };
-      historicalDailyRows()
-        .filter(row => row.source === selected.source && row.campaign === selected.campaign && row.content === selected.content && String(row.date || '').slice(0, 10) !== basisDate)
+      sourceRows
+        .filter(row => row.content === selected.content)
         .forEach(row => addContentRow(row, row.date));
-      (activeData().content_breakdown_today || [])
-        .filter(row => row.source === selected.source && row.campaign === selected.campaign && row.content === selected.content)
+      todayRows
+        .filter(row => row.content === selected.content)
         .forEach(row => addContentRow(row, basisDate));
       return Array.from(byDate.values())
         .map(row => {
@@ -2167,6 +2215,7 @@
     }
 
     function renderContentAnalysisControls(key, sources) {
+      const rangeKey = ensureContentAnalysisRange(key);
       const selected = ensureContentSelection(key, sources);
       const campaigns = historicalCampaignRowsForSources(sources);
       const campaignOptions = campaigns.map(row => {
@@ -2174,7 +2223,7 @@
         const labelPrefix = sources.length > 1 ? `${googleSegment(row.source)} / ` : '';
         return `<option value="${value}" ${row.source === selected.source && row.campaign === selected.campaign ? 'selected' : ''}>${labelPrefix}${row.campaign}</option>`;
       }).join('');
-      const contents = selected.source && selected.campaign ? contentOptionsForCampaign(selected.source, selected.campaign) : [];
+      const contents = selected.source && selected.campaign ? contentOptionsForCampaign(selected.source, selected.campaign, rangeKey) : [];
       const contentOptions = contents.map(row => `<option value="${row.content}" ${row.content === selected.content ? 'selected' : ''}>${row.content} | ${fmt(row.recent_7_spend_share, 'recent_7_spend_share')} | ${fmt(row.lookup_cac, 'lookup_cac')}</option>`).join('');
       return `
         <div class="content-filter">
@@ -2185,7 +2234,8 @@
             <select data-content-select>${contentOptions}</select>
           </label>
           <button data-content-apply>조회</button>
-        </div>`;
+        </div>
+        ${campaignPeriodControls(key, '__content_analysis')}`;
     }
 
     function historicalContentRowsForSource(source) {
@@ -2929,7 +2979,8 @@
       const campaignSelect = e.target.closest('select[data-content-campaign]');
       if (campaignSelect) {
         const [source, campaign] = campaignSelect.value.split('||');
-        const contents = contentOptionsForCampaign(source, campaign);
+        const rangeKey = ensureContentAnalysisRange(key);
+        const contents = contentOptionsForCampaign(source, campaign, rangeKey);
         state.contentDraft[key] = { source, campaign, content: contents[0] ? contents[0].content : '' };
         renderTable();
         return;
@@ -2947,8 +2998,12 @@
         const campaign = modeButton.dataset.campaignName;
         const key = ensureCampaignRange(source, campaign);
         state.campaignMode[key] = modeButton.dataset.campaignMode;
-        state.sortKey = 'lookups';
+        state.sortKey = campaign === '__content_analysis' ? 'date' : 'lookups';
         state.sortDir = -1;
+        if (campaign === '__content_analysis') {
+          ensureContentSelection(source, contentAnalysisSourcesForKey(source));
+          state.contentAnalysis[source] = { ...(state.contentDraft[source] || {}) };
+        }
         renderTable();
         return;
       }
@@ -2965,8 +3020,12 @@
         return;
       }
       state.campaignRange[key] = { start, end };
-      state.sortKey = 'lookups';
+      state.sortKey = campaign === '__content_analysis' ? 'date' : 'lookups';
       state.sortDir = -1;
+      if (campaign === '__content_analysis') {
+        ensureContentSelection(source, contentAnalysisSourcesForKey(source));
+        state.contentAnalysis[source] = { ...(state.contentDraft[source] || {}) };
+      }
       renderTable();
     });
     document.getElementById('sourceControls').addEventListener('click', e => {
