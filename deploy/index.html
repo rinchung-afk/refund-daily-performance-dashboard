@@ -575,6 +575,79 @@
 
     .period-filter label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; font-weight: 900; }
     .period-filter input { min-width: 150px; }
+    .grain-filter span { color: var(--muted); font-size: 11px; font-weight: 900; align-self: center; }
+
+    .content-analysis-compact {
+      display: grid;
+      grid-template-columns: minmax(420px, 1fr) max-content max-content;
+      align-items: stretch;
+      gap: 10px;
+      width: 100%;
+      margin-top: 6px;
+      padding: 10px;
+      border: 1px solid var(--soft-line);
+      border-radius: 8px;
+      background: #f8fbfd;
+    }
+
+    .content-analysis-compact .content-filter,
+    .content-analysis-compact .period-filter {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: stretch;
+      gap: 8px;
+      width: auto;
+      margin-top: 0;
+      padding: 10px;
+      border: 1px solid #dbe7f3;
+      border-radius: 8px;
+      background: #fff;
+      min-height: 74px;
+    }
+
+    .content-control-row,
+    .period-control-row,
+    .grain-control-row {
+      display: flex;
+      align-items: end;
+      gap: 8px;
+      flex-wrap: nowrap;
+      margin-top: auto;
+      min-width: 0;
+    }
+
+    .grain-control-row {
+      align-items: center;
+    }
+
+    .content-analysis-compact .content-filter label {
+      flex: 1 1 160px;
+      min-width: 0;
+    }
+
+    .content-analysis-compact .content-filter select {
+      width: 100%;
+      max-width: none;
+    }
+
+    .control-block-title {
+      flex: 0 0 auto;
+      width: 100%;
+      margin-bottom: 0;
+      color: var(--navy);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .content-analysis-compact select { max-width: min(560px, 42vw); }
+    .content-analysis-compact input { min-width: 132px; }
+
+    @media (max-width: 1180px) {
+      .content-analysis-compact {
+        grid-template-columns: 1fr;
+      }
+    }
 
     .notes-box {
       margin-top: 24px;
@@ -929,6 +1002,7 @@
       activeCampaign: {},
       contentAnalysis: {},
       contentDraft: {},
+      contentGrain: {},
       campaignMode: {},
       campaignRange: {},
       summaryView: 'summary',
@@ -973,6 +1047,7 @@
         activeCampaign: { ...state.activeCampaign },
         contentAnalysis: JSON.parse(JSON.stringify(state.contentAnalysis)),
         contentDraft: JSON.parse(JSON.stringify(state.contentDraft)),
+        contentGrain: JSON.parse(JSON.stringify(state.contentGrain)),
         campaignMode: JSON.parse(JSON.stringify(state.campaignMode)),
         campaignRange: JSON.parse(JSON.stringify(state.campaignRange)),
         sortKey: state.sortKey,
@@ -989,6 +1064,7 @@
       state.activeCampaign = { ...(snapshot.activeCampaign || {}) };
       state.contentAnalysis = JSON.parse(JSON.stringify(snapshot.contentAnalysis || {}));
       state.contentDraft = JSON.parse(JSON.stringify(snapshot.contentDraft || {}));
+      state.contentGrain = JSON.parse(JSON.stringify(snapshot.contentGrain || {}));
       state.campaignMode = JSON.parse(JSON.stringify(snapshot.campaignMode || {}));
       state.campaignRange = JSON.parse(JSON.stringify(snapshot.campaignRange || {}));
       state.expandedGoogleSummary = snapshot.expandedGoogleSummary || null;
@@ -1900,9 +1976,65 @@
 
     function contentAnalysisPeriodKey(key) { return campaignPeriodKey(key, '__content_analysis'); }
 
+    function contentGrainKey(key) { return `${key}||__content_grain`; }
+
+    function contentAnalysisGrain(key) {
+      const grainKey = contentGrainKey(key);
+      if (!state.contentGrain[grainKey]) state.contentGrain[grainKey] = 'day';
+      return state.contentGrain[grainKey];
+    }
+
+    function contentGrainControls(key, title = '') {
+      const grain = contentAnalysisGrain(key);
+      const labels = { day: '일', week: '주', month: '월' };
+      return `
+        <div class="period-filter grain-filter" data-content-grain-key="${escAttr(key)}">
+          ${title ? `<div class="control-block-title">${title}</div>` : ''}
+          <div class="grain-control-row">
+            <span>표 단위</span>
+            ${['day','week','month'].map(item => `<button class="${grain === item ? 'active' : ''}" data-content-grain="${item}" data-content-key="${escAttr(key)}">${labels[item]}</button>`).join('')}
+          </div>
+        </div>`;
+    }
+
+    function formatYmd(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    function addDays(date, days) {
+      const next = new Date(date);
+      next.setDate(next.getDate() + days);
+      return next;
+    }
+
+    function contentPeriodInfo(value, grain) {
+      const base = dateObj(value);
+      const fallback = String(value || '').slice(0, 10);
+      if (!base) return { key: fallback, label: fallback, start: fallback, end: fallback };
+      if (grain === 'week') {
+        const weekStart = addDays(base, -((base.getDay() + 6) % 7));
+        const weekEnd = addDays(weekStart, 6);
+        const start = formatYmd(weekStart);
+        const end = formatYmd(weekEnd);
+        return { key: start, label: shortDateRange(start, end), start, end };
+      }
+      if (grain === 'month') {
+        const startDate = new Date(base.getFullYear(), base.getMonth(), 1);
+        const endDate = new Date(base.getFullYear(), base.getMonth() + 1, 0);
+        const start = formatYmd(startDate);
+        const end = formatYmd(endDate);
+        return { key: start, label: start.slice(0, 7), start, end };
+      }
+      const day = formatYmd(base);
+      return { key: day, label: day, start: day, end: day };
+    }
+
     function ensureContentAnalysisRange(key) {
       const rangeKey = contentAnalysisPeriodKey(key);
-      if (!state.campaignMode[rangeKey]) state.campaignMode[rangeKey] = 'period';
+      state.campaignMode[rangeKey] = 'period';
       if (!state.campaignRange[rangeKey]) {
         state.campaignRange[rangeKey] = { start: DATA.metadata.recent_7_start, end: DATA.metadata.basis_date };
       }
@@ -1918,20 +2050,25 @@
       return key;
     }
 
-    function campaignPeriodControls(source, campaign) {
+    function campaignPeriodControls(source, campaign, title = '', options = {}) {
       const key = ensureCampaignRange(source, campaign);
       const mode = state.campaignMode[key];
       const range = state.campaignRange[key];
       const meta = activeData().historical_detail_meta || {};
+      const hideToday = !!options.hideToday;
+      const hidePeriodButton = !!options.hidePeriodButton;
       return `
         <div class="period-filter" data-period-key="${escAttr(key)}">
-          <button class="${mode === 'today' ? 'active' : ''}" data-campaign-mode="today" data-source="${escAttr(source)}" data-campaign-name="${escAttr(campaign)}">당일</button>
-          <button class="${mode === 'period' ? 'active' : ''}" data-campaign-mode="period" data-source="${escAttr(source)}" data-campaign-name="${escAttr(campaign)}">기간 설정</button>
-          ${mode === 'period' ? `
-            <label>시작일<input type="date" data-range-start value="${range.start}" min="${meta.all_start || meta.start || ''}" max="${DATA.metadata.basis_date}"></label>
-            <label>종료일<input type="date" data-range-end value="${range.end}" min="${meta.all_start || meta.start || ''}" max="${DATA.metadata.basis_date}"></label>
-            <button data-range-apply data-source="${escAttr(source)}" data-campaign-name="${escAttr(campaign)}">조회</button>
-          ` : ''}
+          ${title ? `<div class="control-block-title">${title}</div>` : ''}
+          <div class="period-control-row">
+            ${hideToday ? '' : `<button class="${mode === 'today' ? 'active' : ''}" data-campaign-mode="today" data-source="${escAttr(source)}" data-campaign-name="${escAttr(campaign)}">당일</button>`}
+            ${hidePeriodButton ? '' : `<button class="${mode === 'period' ? 'active' : ''}" data-campaign-mode="period" data-source="${escAttr(source)}" data-campaign-name="${escAttr(campaign)}">기간 설정</button>`}
+            ${mode === 'period' ? `
+              <label>시작일<input type="date" data-range-start value="${range.start}" min="${meta.all_start || meta.start || ''}" max="${DATA.metadata.basis_date}"></label>
+              <label>종료일<input type="date" data-range-end value="${range.end}" min="${meta.all_start || meta.start || ''}" max="${DATA.metadata.basis_date}"></label>
+              <button data-range-apply data-source="${escAttr(source)}" data-campaign-name="${escAttr(campaign)}">조회</button>
+            ` : ''}
+          </div>
         </div>`;
     }
 
@@ -2061,6 +2198,46 @@
       return state.contentDraft[key];
     }
 
+    function aggregateContentAnalysisRows(rows, key) {
+      const grain = contentAnalysisGrain(key);
+      const byPeriod = new Map();
+      rows.forEach(row => {
+        const info = contentPeriodInfo(row.date, grain);
+        if (!info.key) return;
+        if (!byPeriod.has(info.key)) {
+          byPeriod.set(info.key, {
+            date: info.key,
+            date_label: info.label,
+            period_start: info.start,
+            period_end: info.end,
+            source: row.source,
+            campaign: row.campaign,
+            content: row.content,
+            spend: 0,
+            impressions: 0,
+            clicks: 0,
+            members: 0,
+            lookups: 0,
+            applications: 0,
+            application_amount: 0,
+            expected_payment: 0,
+            campaign_period_spend: 0,
+          });
+        }
+        const target = byPeriod.get(info.key);
+        for (const metric of ['spend','impressions','clicks','members','lookups','applications','application_amount','expected_payment']) target[metric] += n(row[metric]);
+        target.campaign_period_spend += n(row.campaign_period_spend);
+      });
+      return Array.from(byPeriod.values()).map(row => {
+        const derived = derive(row);
+        return {
+          ...derived,
+          term: derived.content,
+          daily_spend_share: row.campaign_period_spend ? n(derived.spend) / row.campaign_period_spend : null,
+        };
+      }).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    }
+
     function contentAnalysisRows(key) {
       const rangeKey = ensureContentAnalysisRange(key);
       const selected = state.contentAnalysis[key];
@@ -2104,16 +2281,21 @@
       todayRows
         .filter(row => row.content === selected.content)
         .forEach(row => addContentRow(row, basisDate));
-      return Array.from(byDate.values())
+      const dailyRows = Array.from(byDate.values())
         .map(row => {
           const derived = derive(row);
           return {
             ...derived,
             term: derived.content,
+            date_label: String(row.date).slice(0, 10),
+            period_start: String(row.date).slice(0, 10),
+            period_end: String(row.date).slice(0, 10),
+            campaign_period_spend: campaignDailySpend.get(row.date) || 0,
             daily_spend_share: campaignDailySpend.get(row.date) ? n(derived.spend) / campaignDailySpend.get(row.date) : null,
           };
         })
         .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      return aggregateContentAnalysisRows(dailyRows, key);
     }
 
     function contentTrendSvg(rows) {
@@ -2143,7 +2325,7 @@
         const y = yRoas(row.roas);
         out += `<circle cx="${x}" cy="${y}" r="4" fill="#fff" stroke="#006dff" stroke-width="2"/>`;
         out += `<text x="${x - 18}" y="${y - 9}" font-size="10" font-weight="700" fill="#334155">${fmt(row.roas, 'roas')}</text>`;
-        out += `<text x="${x}" y="${height-12}" font-size="9" font-weight="700" text-anchor="middle" fill="${axisDateColor(row.date)}">${shortDate(row.date)}</text>`;
+        out += `<text x="${x}" y="${height-12}" font-size="9" font-weight="700" text-anchor="middle" fill="${axisDateColor(row.period_start || row.date)}">${row.date_label || shortDate(row.date)}</text>`;
       });
       out += `<rect x="${pad}" y="15" width="10" height="10" fill="#dbeafe" rx="2"/><text x="${pad+15}" y="25" font-size="11" fill="#334155">광고비</text>`;
       out += `<line x1="${pad+70}" y1="20" x2="${pad+90}" y2="20" stroke="#006dff" stroke-width="3"/><text x="${pad+96}" y="25" font-size="11" fill="#334155">ROAS</text>`;
@@ -2153,6 +2335,8 @@
     function contentAnalysisComment(key, rows) {
       const selected = state.contentAnalysis[key] || {};
       if (!rows.length || !selected.content) return '';
+      const grain = contentAnalysisGrain(key);
+      const unitLabel = grain === 'month' ? '월' : grain === 'week' ? '주' : '일';
       const ordered = [...rows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
       const total = derive(sumRows(rows));
       const first = ordered[0];
@@ -2168,11 +2352,11 @@
       return `
         <strong>${detailLabel} 분석: ${selected.content}</strong>
         <ul style="margin:8px 0 0 18px; padding:0;">
-          <li>소재 최초 운영일: ${firstSeen ? String(firstSeen.first_date).slice(0, 10) : String(first.date).slice(0, 10)}</li>
-          <li>content 운영 기간: ${String(first.date).slice(0, 10)}~${String(last.date).slice(0, 10)} (${ordered.length}일)</li>
+          <li>소재 최초 운영일: ${firstSeen ? String(firstSeen.first_date).slice(0, 10) : String(first.period_start || first.date).slice(0, 10)}</li>
+          <li>content 운영 기간: ${String(first.period_start || first.date).slice(0, 10)}~${String(last.period_end || last.date).slice(0, 10)} (${ordered.length}${unitLabel})</li>
           <li>합계 신청금액: ${fmt(total.application_amount, 'application_amount')}, 인당환급액: ${fmt(total.refund_per_application, 'refund_per_application')}, 신청CAC: ${fmt(total.application_cac, 'application_cac')}, ROAS: ${fmt(total.roas, 'roas')}</li>
-          <li>광고비 최다 사용일: ${String(peakSpend.date).slice(0, 10)} / ${fmt(peakSpend.spend, 'spend')} / 일별 광고비 비중 ${fmt(peakSpend.daily_spend_share, 'daily_spend_share')}</li>
-          <li>최근 일자 ROAS: ${fmt(latest.roas, 'roas')}${delta === null ? '' : `, 직전 일자 대비 ${fmt(delta, 'lookup_cac_vs_avg_7d')}`}</li>
+          <li>광고비 최다 사용 ${unitLabel}: ${peakSpend.date_label || String(peakSpend.date).slice(0, 10)} / ${fmt(peakSpend.spend, 'spend')} / campaign 광고비 비중 ${fmt(peakSpend.daily_spend_share, 'daily_spend_share')}</li>
+          <li>최근 ${unitLabel} ROAS: ${fmt(latest.roas, 'roas')}${delta === null ? '' : `, 직전 ${unitLabel} 대비 ${fmt(delta, 'lookup_cac_vs_avg_7d')}`}</li>
         </ul>
         ${contentTrendSvg(rows)}`;
     }
@@ -2226,16 +2410,22 @@
       const contents = selected.source && selected.campaign ? contentOptionsForCampaign(selected.source, selected.campaign, rangeKey) : [];
       const contentOptions = contents.map(row => `<option value="${row.content}" ${row.content === selected.content ? 'selected' : ''}>${row.content} | ${fmt(row.recent_7_spend_share, 'recent_7_spend_share')} | ${fmt(row.lookup_cac, 'lookup_cac')}</option>`).join('');
       return `
-        <div class="content-filter">
-          <label>campaign
-            <select data-content-campaign>${campaignOptions}</select>
-          </label>
-          <label>${selected.source === 'google_pmax' ? 'term' : 'content'}
-            <select data-content-select>${contentOptions}</select>
-          </label>
-          <button data-content-apply>조회</button>
-        </div>
-        ${campaignPeriodControls(key, '__content_analysis')}`;
+        <div class="content-analysis-compact">
+          <div class="content-filter">
+            <div class="control-block-title">조회 조건</div>
+            <div class="content-control-row">
+              <label>campaign
+                <select data-content-campaign>${campaignOptions}</select>
+              </label>
+              <label>${selected.source === 'google_pmax' ? 'term' : 'content'}
+                <select data-content-select>${contentOptions}</select>
+              </label>
+              <button data-content-apply>조회</button>
+            </div>
+          </div>
+          ${campaignPeriodControls(key, '__content_analysis', '데이터 기준', { hideToday: true, hidePeriodButton: true })}
+          ${contentGrainControls(key, '표시 단위')}
+        </div>`;
     }
 
     function historicalContentRowsForSource(source) {
@@ -2548,7 +2738,8 @@
             rows,
             cols: ['date','google_segment','daily_spend_share', ...metricCols],
             defaultSort: 'date',
-            contentAnalysis: true
+            contentAnalysis: true,
+            headerLabels: { date: '기간', daily_spend_share: '기간 광고비 비중' }
           };
         }
         if (state.googleView.startsWith('campaign:')) {
@@ -2624,7 +2815,8 @@
           cols: ['date','daily_spend_share', ...metricCols],
           defaultSort: 'date',
           contentAnalysis: true,
-          source
+          source,
+          headerLabels: { date: '기간', daily_spend_share: '기간 광고비 비중' }
         };
       }
       const key = ensureCampaignRange(source, campaign);
@@ -2733,6 +2925,7 @@
 
     function displayValue(row, col, config = {}) {
       if (shouldHideRealtimeMember(row, col, config)) return '-';
+      if (col === 'date' && row.date_label) return row.date_label;
       return fmt(row[col], col);
     }
 
@@ -2992,6 +3185,15 @@
       }
     });
     document.getElementById('sourceControls').addEventListener('click', e => {
+      const grainButton = e.target.closest('button[data-content-grain]');
+      if (grainButton) {
+        const key = grainButton.dataset.contentKey || contentModeKey();
+        state.contentGrain[contentGrainKey(key)] = grainButton.dataset.contentGrain;
+        state.sortKey = 'date';
+        state.sortDir = -1;
+        renderTable();
+        return;
+      }
       const modeButton = e.target.closest('button[data-campaign-mode]');
       if (modeButton) {
         const source = modeButton.dataset.source;
@@ -3058,6 +3260,14 @@
         const content = jumpButton.dataset.content;
         const key = source === 'google_pmax' || source === 'google_demandgen' ? 'google' : source;
         const selected = { source, campaign, content };
+        const campaignRangeKey = campaignPeriodKey(source, campaign);
+        ensureCampaignRange(source, campaign);
+        const inheritedRange = state.campaignRange[campaignRangeKey];
+        const contentRangeKey = ensureContentAnalysisRange(key);
+        state.campaignMode[contentRangeKey] = 'period';
+        if (inheritedRange && inheritedRange.start && inheritedRange.end) {
+          state.campaignRange[contentRangeKey] = { start: inheritedRange.start, end: inheritedRange.end };
+        }
         state.contentDraft[key] = selected;
         state.contentAnalysis[key] = selected;
         if (key === 'google') {
