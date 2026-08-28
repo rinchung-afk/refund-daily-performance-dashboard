@@ -71,11 +71,8 @@
     }
 
     .hero-row {
-      display: grid;
-      grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
-      gap: 18px;
-      align-items: center;
-      margin-top: 10px;
+      display: block;
+      margin-top: 12px;
     }
 
     .hero-copy {
@@ -84,10 +81,11 @@
 
     .meta-grid {
       display: grid;
-      grid-template-columns: minmax(76px, .7fr) minmax(126px, 1fr) minmax(190px, 1.35fr) minmax(280px, 2.25fr) minmax(220px, 1.75fr) minmax(174px, 1.35fr);
+      grid-template-columns: minmax(104px, .7fr) minmax(160px, 1fr) minmax(220px, 1.25fr) minmax(360px, 2.05fr) minmax(280px, 1.55fr) minmax(206px, 1.2fr);
       justify-content: stretch;
       align-items: stretch;
       gap: 6px;
+      margin-top: 16px;
       min-width: 0;
       width: 100%;
     }
@@ -119,8 +117,11 @@
       font-weight: 900;
       line-height: 1.2;
       white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+    }
+
+    .meta-source-chip strong {
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
 
     .conversion-basis-chip .basis-line {
