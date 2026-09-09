@@ -668,6 +668,15 @@
       font-size: 11px;
       font-weight: 900;
     }
+    .search-total-row {
+      background: #eef6ff;
+      border-top: 2px solid #bfdbfe;
+      border-bottom: 2px solid #bfdbfe;
+      font-weight: 900;
+    }
+    .search-total-row td {
+      color: var(--navy);
+    }
 
     .content-analysis-compact {
       display: grid;
@@ -2355,6 +2364,15 @@
       return state.contentSearchMode[contentSearchKey(source, campaign)] || 'contains';
     }
 
+    function hasActiveContentSearch(source, campaign) {
+      const key = contentSearchKey(source, campaign);
+      return !!(
+        String(state.contentSearch[key] || '').trim()
+        || String(state.contentSearchExclude[key] || '').trim()
+        || (state.contentSearchMode[key] && state.contentSearchMode[key] !== 'contains')
+      );
+    }
+
     function searchTerms(value) {
       return String(value || '')
         .toLowerCase()
@@ -2412,6 +2430,26 @@
     function detailControlStrip(...items) {
       const html = items.filter(Boolean).join('');
       return html ? `<div class="detail-control-strip">${html}</div>` : '';
+    }
+
+    function searchTotalRow(rows, config) {
+      const total = derive(sumRows(rows));
+      const count = rows.length;
+      const detailLabel = `검색 합계 (${count}개)`;
+      const row = {
+        ...total,
+        is_search_total: true,
+        action: '검색 합계',
+        source: config.isGoogle ? 'Google' : (config.source || '합계'),
+        campaign: config.campaign || '합계',
+        content: detailLabel,
+        term: detailLabel,
+      };
+      return row;
+    }
+
+    function shouldShowSearchTotal(config) {
+      return !!(config.searchScope && hasActiveContentSearch(config.searchScope.source, config.searchScope.campaign));
     }
 
     function formatYmd(date) {
@@ -3246,6 +3284,7 @@
             periodRange: state.campaignRange[key],
             scopeLabel: 'Google',
             isGoogle: true,
+            searchScope: { source: 'google', campaign: '__content_total' },
             emptyMessage: '표시할 Content Total 데이터가 없습니다.'
           };
         }
@@ -3279,7 +3318,8 @@
             source,
             campaign,
             periodMode: mode,
-            periodRange: state.campaignRange[key]
+            periodRange: state.campaignRange[key],
+            searchScope: { source, campaign }
           };
         }
         return {
@@ -3333,6 +3373,7 @@
           periodMode: mode,
           periodRange: state.campaignRange[key],
           scopeLabel: source,
+          searchScope: { source, campaign: '__content_total' },
           emptyMessage: '표시할 Content Total 데이터가 없습니다.'
         };
       }
@@ -3353,7 +3394,7 @@
       const filteredRows = applyContentSearch(baseRows, source, campaign);
       const campaignStats = new Map([[key, sumRows(baseRows)]]);
       const rows = filteredRows.map(row => classifyContentAction(row, campaignStats));
-      return { rows, cols: ['action','content', ...metricCols], defaultSort: defaultSortMetric('application_amount'), highlightContent: true, source, campaign, periodMode: mode, periodRange: state.campaignRange[key] };
+      return { rows, cols: ['action','content', ...metricCols], defaultSort: defaultSortMetric('application_amount'), highlightContent: true, source, campaign, periodMode: mode, periodRange: state.campaignRange[key], searchScope: { source, campaign } };
     }
 
     function renderSourceControls() {
@@ -3507,6 +3548,7 @@
 
     function renderCell(row, col, config) {
       const value = displayValue(row, col, config);
+      if (row.is_search_total) return `<td class="${colClass(col)}">${value}</td>`;
       if (config.highlightContent && (col === 'content' || col === 'term')) {
         const content = row.content || row.term || '';
         return `<td class="${colClass(col)}"><button class="link-cell" data-jump-content data-source="${escAttr(row.source)}" data-campaign="${escAttr(row.campaign)}" data-content="${escAttr(content)}">${value}</button></td>`;
@@ -3638,7 +3680,11 @@
           return parent + children;
         }).join('');
       } else {
-        body = rows.map(row => {
+        const searchTotal = shouldShowSearchTotal(config) ? searchTotalRow(rows, config) : null;
+        const searchTotalBody = searchTotal
+          ? `<tr class="search-total-row">${config.cols.map(col => renderCell(searchTotal, col, config)).join('')}</tr>`
+          : '';
+        body = searchTotalBody + rows.map(row => {
           let rowClass = '';
           if (config.highlightContent) {
             if (row.action_key === 'scale') rowClass = 'action-scale';
